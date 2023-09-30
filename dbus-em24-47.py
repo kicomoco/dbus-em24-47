@@ -1,6 +1,6 @@
 #!/usr/bin/python
 
-SCRIPT_HOME = "/data/dbus-e24-47"
+SCRIPT_HOME = "/opt/victronenergy/dbus-e24-47"
 
 import logging
 import dbus
@@ -74,7 +74,7 @@ ENERGYMETER_PATHS = {
 	'/ErrorCode': PathDefinition(NO_UNIT, defaultValue=0),
 }
 
-PORT = '/dev/ttyUSB4'
+PORT = sys.argv[1]
 
 logging.basicConfig()
 logger = logging.getLogger("EM2447")
@@ -236,6 +236,8 @@ class EM2447():#SettableService):
 			self._local_values["/Ac/L1/Energy/Reverse"] = reverse/3
 			self._local_values["/Ac/L2/Energy/Reverse"] = reverse/3
 			self._local_values["/Ac/L3/Energy/Reverse"] = reverse/3
+
+		stdout.flush()
 
 	def publish(self):
 		self.update()

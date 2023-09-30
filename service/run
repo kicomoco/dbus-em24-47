@@ -1,0 +1,3 @@
+#!/bin/sh
+exec 2>&1
+exec /opt/victronenergy/dbus-em24-47/start-em2447.sh TTY
