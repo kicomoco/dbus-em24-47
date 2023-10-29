@@ -17,6 +17,7 @@ from pymodbus.client.sync import ModbusSerialClient
 from pymodbus.transaction import ModbusRtuFramer
 from pymodbus.pdu import ExceptionResponse
 from pymodbus.payload import BinaryPayloadDecoder
+from pymodbus.payload import BinaryPayloadBuilder
 from pymodbus.constants import Endian
 from sys import exit
 import math
@@ -60,16 +61,16 @@ ENERGYMETER_PATHS = {
 	'/Ac/L1/Energy/Reverse': PathDefinition(ENERGY, defaultValue=0),
 	'/Ac/L1/Power': PathDefinition(POWER, defaultValue=0),
 	'/Ac/L1/Voltage': PathDefinition(VOLTAGE, defaultValue=0),
-	'/Ac/L2/Current': PathDefinition(CURRENT, defaultValue=0),
-	'/Ac/L2/Energy/Forward': PathDefinition(ENERGY, defaultValue=0),
-	'/Ac/L2/Energy/Reverse': PathDefinition(ENERGY, defaultValue=0),
-	'/Ac/L2/Power': PathDefinition(POWER, defaultValue=0),
-	'/Ac/L2/Voltage': PathDefinition(VOLTAGE, defaultValue=0),
-	'/Ac/L3/Current': PathDefinition(CURRENT, defaultValue=0),
-	'/Ac/L3/Energy/Forward': PathDefinition(ENERGY, defaultValue=0),
-	'/Ac/L3/Energy/Reverse': PathDefinition(ENERGY, defaultValue=0),
-	'/Ac/L3/Power': PathDefinition(POWER, defaultValue=0),
-	'/Ac/L3/Voltage': PathDefinition(VOLTAGE, defaultValue=0),
+#	'/Ac/L2/Current': PathDefinition(CURRENT, defaultValue=0),
+#	'/Ac/L2/Energy/Forward': PathDefinition(ENERGY, defaultValue=0),
+#	'/Ac/L2/Energy/Reverse': PathDefinition(ENERGY, defaultValue=0),
+#	'/Ac/L2/Power': PathDefinition(POWER, defaultValue=0),
+#	'/Ac/L2/Voltage': PathDefinition(VOLTAGE, defaultValue=0),
+#	'/Ac/L3/Current': PathDefinition(CURRENT, defaultValue=0),
+#	'/Ac/L3/Energy/Forward': PathDefinition(ENERGY, defaultValue=0),
+#	'/Ac/L3/Energy/Reverse': PathDefinition(ENERGY, defaultValue=0),
+#	'/Ac/L3/Power': PathDefinition(POWER, defaultValue=0),
+#	'/Ac/L3/Voltage': PathDefinition(VOLTAGE, defaultValue=0),
 	'/DeviceType': PathDefinition(NO_UNIT, defaultValue=47),
 	'/ErrorCode': PathDefinition(NO_UNIT, defaultValue=0),
 }
@@ -112,6 +113,13 @@ def read32intTriple(address, multiplier=1):
 			decoder.decode_32bit_int()*multiplier
 		)
 
+def write16uint(address, value):
+
+	builder = BinaryPayloadBuilder(byteorder=Endian.Big,wordorder=Endian.Little)
+	builder.add_16bit_uint(value)
+	payload = builder.build()
+	writeholding(address, payload)
+
 def read16uint(address):
 
 	rr = readholding(address, 1)
@@ -140,6 +148,20 @@ def dbusConnection():
 
 	return SessionBus() if 'DBUS_SESSION_BUS_ADDRESS' in os.environ else SystemBus()
 
+def writeholding(address, value):
+
+	try:
+		rr = client.write_registers(address, value, skip_encode=True, unit=1)
+	except ModbusException as exc:
+		print(f"Received ModbusException({exc}) from library")
+		client.close()
+		return
+
+	if rr.isError():
+		print(f"Received Modbus library error({rr})")
+		client.close()
+		return
+
 def readholding(address, bytes):
 
 	try:
@@ -162,15 +184,15 @@ def readholding(address, bytes):
 	return rr
 
 client = ModbusSerialClient(
-        method='rtu',
-        port=PORT,
-        baudrate=9600,
-        bytesize=8,
-        parity="N",
-        stopbits=1,
+	method='rtu',
+	port=PORT,
+	baudrate=9600,
+	bytesize=8,
+	parity="N",
+	stopbits=1,
 )
 
-class EM2447():#SettableService):
+class EM2447():
 	def __init__(self, conn):
 		super().__init__()
 		self.service = VeDbusService(SERVICE_NAME, conn)
@@ -192,52 +214,91 @@ class EM2447():#SettableService):
 			self.service.add_path(path, defn.defaultValue, gettextcallback=defn.unit.gettextcallback)
 
 		client.connect()
+		self.iterSinceNonPriority = 0
 
 	def update(self):
+
+		if self.iterSinceNonPriority > 10:
+			forward = read32int(0x3E,1/10)
+			if forward is not None:
+				try:
+					forward = forward #-self.forwardoffset
+					print(f"Import: {forward}kWh")
+					self._local_values["/Ac/Energy/Forward"] = forward
+				except AttributeError:
+					self.forwardoffset = forward
+
 		voltage = read32intTriple(0x0,1/10)
 		if voltage is not None:
 			print(f"Voltage L1:{voltage[0]} L2:{voltage[1]} L3:{voltage[2]}")
 			self._local_values["/Ac/L1/Voltage"] = voltage[0]
-			self._local_values["/Ac/L2/Voltage"] = voltage[1]
-			self._local_values["/Ac/L3/Voltage"] = voltage[2]
+			if voltage[1]>0:
+				self._local_values["/Ac/L2/Voltage"] = voltage[1]
+			if voltage[2]>0:
+				self._local_values["/Ac/L3/Voltage"] = voltage[2]
 
-		amperage = read32intTriple(0xC,1/1000)
-		if amperage is not None:
-			print(f"Amperage L1:{amperage[0]} L2:{amperage[1]} L3:{amperage[2]}")
-			self._local_values["/Ac/L1/Current"] = amperage[0]
-			self._local_values["/Ac/L2/Current"] = amperage[1]
-			self._local_values["/Ac/L3/Current"] = amperage[2]
+			amperage = read32intTriple(0xC,1/1000)
+			if amperage is not None:
+				print(f"Amperage L1:{amperage[0]} L2:{amperage[1]} L3:{amperage[2]}")
+				self._local_values["/Ac/L1/Current"] = amperage[0]
+				if voltage[1]>0:
+					self._local_values["/Ac/L2/Current"] = amperage[1]
+				if voltage[2]>0:
+					self._local_values["/Ac/L3/Current"] = amperage[2]
 
-		wattage = read32intTriple(0x12,1/10)
-		if wattage is not None:
-			wattageTotal = math.fsum(wattage)
-			print(f"Wattage L1:{wattage[0]} L2:{wattage[1]} L3:{wattage[2]} Total:{wattageTotal}")
-			self._local_values["/Ac/L1/Power"] = wattage[0]
-			self._local_values["/Ac/L2/Power"] = wattage[1]
-			self._local_values["/Ac/L3/Power"] = wattage[2]
-			self._local_values["/Ac/Power"] = wattageTotal
+			wattage = read32intTriple(0x12,1/10)
+			if wattage is not None:
+				wattageTotal = math.fsum(wattage)
+				print(f"Wattage L1:{wattage[0]} L2:{wattage[1]} L3:{wattage[2]} Total:{wattageTotal}")
+				self._local_values["/Ac/L1/Power"] = wattage[0]
+				if voltage[1]>0:
+					self._local_values["/Ac/L2/Power"] = wattage[1]
+				if voltage[2]>0:
+					self._local_values["/Ac/L3/Power"] = wattage[2]
+				self._local_values["/Ac/Power"] = wattageTotal
 
-		kwh = read32intTriple(0x46,1/10)
-		if kwh is not None:
-			print(f"kWh L1:{kwh[0]} L2:{kwh[1]} L3:{kwh[2]}")
-			self._local_values["/Ac/L1/Energy/Forward"] = kwh[0]
-			self._local_values["/Ac/L2/Energy/Forward"] = kwh[1]
-			self._local_values["/Ac/L3/Energy/Forward"] = kwh[2]
+			if self.iterSinceNonPriority > 10:
+				kwh = read32intTriple(0x46,1/10)
+				if kwh is not None:
+					try:
+						kwh0 = kwh[0] #-self.kwh0offset
+						kwh1 = kwh[1] #-self.kwh1offset
+						kwh2 = kwh[2] #-self.kwh2offset
+						print(f"kWh L1:{kwh0} L2:{kwh1} L3:{kwh2}")
+						self._local_values["/Ac/L1/Energy/Forward"] = kwh0
+						if voltage[1]>0:
+							self._local_values["/Ac/L2/Energy/Forward"] = kwh1
+						if voltage[2]>0:
+							self._local_values["/Ac/L3/Energy/Forward"] = kwh2
+					except AttributeError:
+						self.kwh0offset = kwh[0]
+						self.kwh1offset = kwh[1]
+						self.kwh2offset = kwh[2]
+	
+				reverse = read32int(0x5C,1/10)
+				if reverse is not None:
+					try:
+						reverse = reverse #-self.reverseoffset
+						print(f"Export: {reverse}kWh")
+						phases = 1
+						if voltage[1]>0:
+							phases = phases+1
+						if voltage[2]>0:
+							phases = phases+1
+						self._local_values["/Ac/Energy/Reverse"] = reverse
+						self._local_values["/Ac/L1/Energy/Reverse"] = reverse/phases
+						if voltage[1]>0:
+							self._local_values["/Ac/L2/Energy/Reverse"] = reverse/phases
+						if voltage[2]>0:
+							self._local_values["/Ac/L3/Energy/Reverse"] = reverse/phases
+					except AttributeError:
+						self.reverseoffset = reverse
 
-		forward = read32int(0x3E,1/10)
-		if forward is not None:
-			print(f"Import: {forward}kWh")
-			self._local_values["/Ac/Energy/Forward"] = forward
+				self.iterSinceNonPriority = 0
 
-		reverse = read32int(0x5C,1/10)
-		if reverse is not None:
-			print(f"Export: {reverse}kWh")
-			self._local_values["/Ac/Energy/Reverse"] = reverse
-			self._local_values["/Ac/L1/Energy/Reverse"] = reverse/3
-			self._local_values["/Ac/L2/Energy/Reverse"] = reverse/3
-			self._local_values["/Ac/L3/Energy/Reverse"] = reverse/3
+			self.iterSinceNonPriority = self.iterSinceNonPriority + 1
 
-		stdout.flush()
+		sys.stdout.flush()
 
 	def publish(self):
 		self.update()
@@ -264,7 +325,7 @@ def run_em24():
 		exit()
 
 	em24 = EM2447(dbusConnection())
-	GLib.timeout_add(250, em24.publish)
+	GLib.timeout_add(50, em24.publish)
 	mainloop = GLib.MainLoop()
 	mainloop.run()
 

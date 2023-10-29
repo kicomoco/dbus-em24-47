@@ -1,14 +1,12 @@
 #!/bin/bash
 
-cp /data/dbus-em24-47/serial-starter.conf /data/conf/serial-starter.d/dbus-em24-47.conf
-cp -a /data/dbus-em24-47/serial-starter-template /opt/victronenergy/service-templates/dbus-em24-47
+ln -s /data/dbus-em24-47/serial-starter.conf /data/conf/serial-starter.d/dbus-em24-47.conf
+ln -s /data/dbus-em24-47/serial-starter-template /opt/victronenergy/service-templates/dbus-em24-47
 
 chmod +x /opt/victronenergy/service-templates/dbus-em24-47/run
 chmod +x /opt/victronenergy/service-templates/dbus-em24-47/log/run
 
-cp -rf /data/dbus-em24-47 /opt/victronenergy &>/dev/null
-
-chmod +x /opt/victronenergy/dbus-em24-47/dbus-em24-47.sh
+ln -s /data/dbus-em24-47 /opt/victronenergy/dbus-em24-47
 
 chmod +x /opt/victronenergy/dbus-em24-47/service/run
 chmod +x /opt/victronenergy/dbus-em24-47/service/log/run
